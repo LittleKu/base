@@ -1,0 +1,13 @@
+import("../base.gni")
+
+base_executable("execute") {
+  configs = []
+
+  include_dirs = [ "../", ]
+
+  sources = [ "execute.cc" ]
+
+  deps = [ "//base" ]
+
+  suppressed_configs = [ "//build/config/compiler:thin_archive" ]
+}

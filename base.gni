@@ -1,0 +1,85 @@
+import("//build/config/arm.gni")
+import("//build/config/features.gni")
+import("//build/config/mips.gni")
+import("//build/config/ozone.gni")
+import("//build/config/sanitizers/sanitizers.gni")
+import("//build/config/sysroot.gni")
+import("//build_overrides/build.gni")
+
+if (is_ios) {
+  import("//build/config/ios/rules.gni")
+}
+
+if (is_mac) {
+  import("//build/config/mac/rules.gni")
+}
+
+declare_args() {
+    base_win_undef_unicode = false
+}
+
+base_root = get_path_info(".", "abspath")
+
+base_common_configs = [ base_root + ":common_config" ]
+
+if (is_mac || is_ios) {
+  base_common_configs += [ "//build/config/compiler:enable_arc" ]
+}
+
+# Common configs to remove or add in all rtc targets.
+base_remove_configs = []
+if (!build_with_chromium && is_clang) {
+  base_remove_configs += [ "//build/config/clang:find_bad_constructs" ]
+}
+base_add_configs = base_common_configs
+
+set_defaults("rtc_executable") {
+  configs = base_add_configs
+  suppressed_configs = []
+}
+
+base_default_visibility = [ base_root + "/*" ]
+
+absl_include_config = "//third_party/abseil-cpp:absl_include_config"
+absl_define_config = "//third_party/abseil-cpp:absl_define_config"
+
+absl_flags_config = base_root + ":absl_flags_configs"
+
+template("base_executable") {
+  executable(target_name) {
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "deps",
+                             "configs",
+                             "public_configs",
+                             "suppressed_configs",
+                             "visibility",
+                           ])
+    forward_variables_from(invoker, [ "visibility" ])
+    if (!defined(visibility)) {
+      visibility = base_default_visibility
+    }
+    configs += invoker.configs
+    configs -= base_remove_configs
+    configs -= invoker.suppressed_configs
+    deps = invoker.deps
+
+    public_configs = [
+      absl_include_config,
+      absl_define_config,
+    ]
+    if (defined(testonly) && testonly) {
+      public_configs += [ absl_flags_config ]
+    }
+    if (defined(invoker.public_configs)) {
+      public_configs += invoker.public_configs
+    }
+    if (is_win) {
+      deps += [
+        # Give executables the default manifest on Windows (a no-op elsewhere).
+        "//build/win:default_exe_manifest",
+      ]
+    }
+  }
+}
