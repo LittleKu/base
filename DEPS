@@ -1,5 +1,11 @@
-vars = {
+gclient_gn_args_file = 'src/build/config/gclient_args.gni'
+gclient_gn_args = [
+  'generate_location_tags',
+]
 
+vars = {
+    # Keep the Chromium default of generating location tags.
+  'generate_location_tags': True,
 }
 
 deps = {
