@@ -83,3 +83,79 @@ template("base_executable") {
     }
   }
 }
+
+template("base_shared_library") {
+  shared_library(target_name) {
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "configs",
+                             "public_configs",
+                             "suppressed_configs",
+                             "visibility",
+                           ])
+    forward_variables_from(invoker, [ "visibility" ])
+    if (!defined(visibility)) {
+      visibility = base_default_visibility
+    }
+
+    configs += invoker.configs
+    configs -= base_remove_configs
+    configs -= invoker.suppressed_configs
+    public_configs = [
+      absl_include_config,
+      absl_define_config,
+    ]
+    if (defined(testonly) && testonly) {
+      public_configs += [ absl_flags_config ]
+    }
+    if (defined(invoker.public_configs)) {
+      public_configs += invoker.public_configs
+    }
+  }
+}
+
+template("base_static_library") {
+  static_library(target_name) {
+    forward_variables_from(invoker,
+                           "*",
+                           [
+                             "configs",
+                             "public_configs",
+                             "suppressed_configs",
+                             "visibility",
+                           ])
+    forward_variables_from(invoker, [ "visibility" ])
+    if (!defined(visibility)) {
+      visibility = base_default_visibility
+    }
+
+    configs += invoker.configs
+    configs -= base_remove_configs
+    configs -= invoker.suppressed_configs
+    public_configs = [
+      absl_include_config,
+      absl_define_config,
+    ]
+    if (defined(testonly) && testonly) {
+      public_configs += [ absl_flags_config ]
+    }
+    if (defined(invoker.public_configs)) {
+      public_configs += invoker.public_configs
+    }
+
+    # If absl_deps is [], no action is needed. If not [], then it needs to be
+    # converted to //third_party/abseil-cpp:absl when build_with_chromium=true
+    # otherwise it just needs to be added to deps.
+    if (absl_deps != []) {
+      if (!defined(deps)) {
+        deps = []
+      }
+      if (build_with_chromium) {
+        deps += [ "//third_party/abseil-cpp:absl" ]
+      } else {
+        deps += absl_deps
+      }
+    }
+  }
+}
