@@ -1,7 +1,15 @@
 import("../base.gni")
 
+config("exe") {
+  if (is_win) {
+    ldflags = [
+      "/SUBSYSTEM:WINDOWS",
+    ]
+  }
+}
+
 base_executable("execute") {
-  configs = []
+  configs = [ ":exe" ]
 
   include_dirs = [ "../", ]
 
