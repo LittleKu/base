@@ -26,16 +26,26 @@ if (is_mac || is_ios) {
   base_common_configs += [ "//build/config/compiler:enable_arc" ]
 }
 
-# Common configs to remove or add in all rtc targets.
 base_remove_configs = []
 if (!build_with_chromium && is_clang) {
   base_remove_configs += [ "//build/config/clang:find_bad_constructs" ]
 }
 base_add_configs = base_common_configs
 
-set_defaults("rtc_executable") {
+set_defaults("base_executable") {
   configs = base_add_configs
   suppressed_configs = []
+}
+
+set_defaults("base_shared_library") {
+  configs = base_add_configs
+  suppressed_configs = []
+}
+
+set_defaults("base_static_library") {
+  configs = base_add_configs
+  suppressed_configs = []
+  absl_deps = []
 }
 
 base_default_visibility = [ base_root + "/*" ]
