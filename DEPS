@@ -65,7 +65,9 @@ deps = {
     'https://boringssl.googlesource.com/boringssl.git@b95124305ab15c7523d3e21437309fa5dd717ee8',
   'src/third_party/catapult':
     'https://chromium.googlesource.com/catapult.git@abcd8ba23ed9836cf8d2e5f93b43ea47b05463d3',
-
+  'src/third_party/ced/src': {
+    'url': 'https://chromium.googlesource.com/external/github.com/google/compact_enc_det.git@ba412eaaacd3186085babcd901679a48863c7dd5',
+  },
   'src/third_party/icu': {
     'url': 'https://chromium.googlesource.com/chromium/deps/icu.git@50ec7b3822a90d73aa761b21fc941b485a1cb9d6',
   },
@@ -256,34 +258,4 @@ hooks = [
                 '-s', 'src/build/toolchain/win/rc/linux64/rc.sha1',
     ],
   },
-  {
-    'name': 'msan_chained_origins',
-    'pattern': '.',
-    'condition': 'checkout_instrumented_libraries',
-    'action': [ 'python3',
-                'src/third_party/depot_tools/download_from_google_storage.py',
-                "--no_resume",
-                "--no_auth",
-                "--bucket", "chromium-instrumented-libraries",
-                "-s", "src/third_party/instrumented_libraries/binaries/msan-chained-origins.tgz.sha1",
-              ],
-  },
-  {
-    'name': 'msan_no_origins',
-    'pattern': '.',
-    'condition': 'checkout_instrumented_libraries',
-    'action': [ 'python3',
-                'src/third_party/depot_tools/download_from_google_storage.py',
-                "--no_resume",
-                "--no_auth",
-                "--bucket", "chromium-instrumented-libraries",
-                "-s", "src/third_party/instrumented_libraries/binaries/msan-no-origins.tgz.sha1",
-              ],
-  },
-]
-
-include_rules = [
-  '+base',
-  # '+third_party/perfetto/include/perfetto/tracing',
-  # '+third_party/perfetto/include/perfetto/test',
 ]
