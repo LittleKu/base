@@ -11,54 +11,53 @@ config("common_config") {
     cflags += [ "-Wno-shadow" ]
   }
 
-    if (is_posix || is_fuchsia) {
-      cflags_c += [
-        # Some of these flags should also be added to cflags_objc.
+  if (is_posix || is_fuchsia) {
+    cflags_c += [
+      # Some of these flags should also be added to cflags_objc.
 
-        # "-Wextra",  (used when building C++ but not when building C)
-        # "-Wmissing-prototypes",  (C/Obj-C only)
-        # "-Wmissing-declarations",  (ensure this is always used C/C++, etc..)
-        "-Wstrict-prototypes",
+      # "-Wextra",  (used when building C++ but not when building C)
+      # "-Wmissing-prototypes",  (C/Obj-C only)
+      # "-Wmissing-declarations",  (ensure this is always used C/C++, etc..)
+      "-Wstrict-prototypes",
 
-        # "-Wpointer-arith",  (ensure this is always used C/C++, etc..)
-        # "-Wbad-function-cast",  (C/Obj-C only)
-        # "-Wnested-externs",  (C/Obj-C only)
-      ]
-      cflags_objc += [ "-Wstrict-prototypes" ]
-      cflags_cc = [
-        "-Wnon-virtual-dtor",
+      # "-Wpointer-arith",  (ensure this is always used C/C++, etc..)
+      # "-Wbad-function-cast",  (C/Obj-C only)
+      # "-Wnested-externs",  (C/Obj-C only)
+    ]
+    cflags_objc += [ "-Wstrict-prototypes" ]
+    cflags_cc = [
+      "-Wnon-virtual-dtor",
 
-        # This is enabled for clang; enable for gcc as well.
-        "-Woverloaded-virtual",
-      ]
+      # This is enabled for clang; enable for gcc as well.
+      "-Woverloaded-virtual",
+    ]
+  }
+
+  if (is_clang) {
+    cflags += [ "-Wc++11-narrowing" ]
+
+    if (!is_fuchsia) {
+      # Compiling with the Fuchsia SDK results in Wundef errors
+      # TODO(bugs.fuchsia.dev/100722): Remove from (!is_fuchsia) branch when
+      # Fuchsia build errors are fixed.
+      cflags += [ "-Wundef" ]
     }
 
-    if (is_clang) {
-      cflags += [ "-Wc++11-narrowing" ]
-
-      if (!is_fuchsia) {
-        # Compiling with the Fuchsia SDK results in Wundef errors
-        # TODO(bugs.fuchsia.dev/100722): Remove from (!is_fuchsia) branch when
-        # Fuchsia build errors are fixed.
-        cflags += [ "-Wundef" ]
-      }
-
-      if (!is_nacl) {
-        # Flags NaCl (Clang 3.7) do not recognize.
-        cflags += [ "-Wunused-lambda-capture" ]
-      }
+    if (!is_nacl) {
+      # Flags NaCl (Clang 3.7) do not recognize.
+      cflags += [ "-Wunused-lambda-capture" ]
     }
+  }
 
-    if (is_win && !is_clang) {
-      # MSVC warning suppressions (needed to use Abseil).
-      # external headers warning suppression (or fix them upstream).
-      cflags += [ "/wd4702" ]  # unreachable code
+  if (is_win && !is_clang) {
+    # MSVC warning suppressions (needed to use Abseil).
+    # external headers warning suppression (or fix them upstream).
+    cflags += [ "/wd4702" ]  # unreachable code
 
-      # MSVC 2019 warning suppressions for C++17 compiling
-      cflags +=
-          [ "/wd5041" ]  # out-of-line definition for constexpr static data
-                         # member is not needed and is deprecated in C++17
-    }
+    # MSVC 2019 warning suppressions for C++17 compiling
+    cflags += [ "/wd5041" ]  # out-of-line definition for constexpr static data
+                             # member is not needed and is deprecated in C++17
+  }
 
   if (current_cpu == "mipsel") {
     defines += [ "MIPS32_LE" ]
@@ -102,5 +101,5 @@ config("absl_flags_configs") {
 }
 
 group("default") {
-    deps = ["//examples:execute"]
+  deps = [ "//examples:execute" ]
 }

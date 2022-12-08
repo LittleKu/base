@@ -9,7 +9,7 @@ config("exe") {
 }
 
 base_executable("execute") {
-  configs = [ ":exe" ]
+  configs += [ ":exe" ]
 
   include_dirs = [ "../", ]
 
