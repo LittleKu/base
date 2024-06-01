@@ -5,6 +5,11 @@ config("exe") {
     ldflags = [
       "/SUBSYSTEM:WINDOWS",
     ]
+    if (is_clang) {
+      cflags =[
+        "-Wno-undef"
+      ]
+    }
   }
 }
 
