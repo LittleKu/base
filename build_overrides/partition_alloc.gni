@@ -8,7 +8,25 @@
 
 # Use default values for PartitionAlloc as standalone library from
 # base/allocator/partition_allocator/build_overrides/partition_alloc.gni
-import(
-    "//base/allocator/partition_allocator/build_overrides/partition_alloc.gni")
+
+import("//build/config/android/config.gni")
+import("//build/config/cast.gni")
+import("//build/config/chromeos/ui_mode.gni")
+import("//build/config/compiler/compiler.gni")
+import("//build/config/cronet/config.gni")
+import("//build/config/dcheck_always_on.gni")
+import("//build/config/logging.gni")
+
+use_partition_alloc_as_malloc_default = false
+use_allocator_shim_default = false
+enable_backup_ref_ptr_support_default = false
+enable_backup_ref_ptr_slow_checks_default = false
+enable_dangling_raw_ptr_checks_default = false
+
+# raw_ptr behave like naked pointers, except they are always initialized. This
+# avoids relying on undefined behaviors.
+raw_ptr_zero_on_construct_default = true
+raw_ptr_zero_on_move_default = true
+raw_ptr_zero_on_destruct_default = false
 
 assert_cpp20_default = true
