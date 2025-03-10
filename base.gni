@@ -177,7 +177,7 @@ template("base_static_library") {
 }
 
 template("base_source_set") {
-  static_library(target_name) {
+  source_set(target_name) {
     forward_variables_from(invoker,
                            "*",
                            [
