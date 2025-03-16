@@ -5,7 +5,7 @@ Install depot_tools [here](https://commondatastorage.googleapis.com/chrome-infra
 ## Setting up Windows
 
 ### Visual Studio
-*   Install [Visual Studio 2019](https://docs.microsoft.com/en-us/visualstudio/releases/2019/release-notes) (>=16.0.0)
+*   Install [Visual Studio 2022](https://learn.microsoft.com/en-us/visualstudio/releases/2022/release-notes) (>=17.13)
 
 *   Install [Windows 10 SDK](https://developer.microsoft.com/en-us/windows/downloads/sdk-archive/)
 
@@ -26,10 +26,12 @@ cd src
 set NINJA_SUMMARIZE_BUILD=1
 
 # MacOS:
-gn gen out/Debug --filters://base "--args=is_debug=true target_os=\"mac\"" --ide=xcode
+export CHROMIUM_BUILDTOOLS_PATH=`pwd`/buildtools
+gn gen out/Debug --filters://base "--args=is_debug=true target_os=\"mac\"" --ide=xcode --filters://examples
 autoninja -C out/Debug default
 
 # Windows:
-gn gen out/Debug_x86 --filters://base "--args=is_debug=true target_os=\"win\" target_cpu=\"x86\"" --ide=vs2019
+set CHROMIUM_BUILDTOOLS_PATH=%cd%\buildtools
+gn gen out/Debug_x86 --filters://base --args=is_debug=true --ide=vs2022 --sln=example --filters://examples
 autoninja -C out/Debug_x86 default
 ```
