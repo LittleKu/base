@@ -101,5 +101,5 @@ config("absl_flags_configs") {
 }
 
 group("default") {
-  deps = [ "//examples:execute" ]
+  deps = [ "//examples:example" ]
 }

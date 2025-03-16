@@ -1,26 +1,26 @@
 import("../base.gni")
 
-config("exe") {
+config("example_config") {
   if (is_win) {
-    ldflags = [
-      "/SUBSYSTEM:WINDOWS",
-    ]
+    ldflags = [ "/SUBSYSTEM:WINDOWS" ]
     if (is_clang) {
-      cflags =[
-        "-Wno-undef"
-      ]
+      cflags = [ "-Wno-undef" ]
     }
   }
 }
 
-base_executable("execute") {
-  configs += [ ":exe" ]
+base_executable("example") {
+  configs += [ ":example_config" ]
 
-  include_dirs = [ "../", ]
+  include_dirs = [ "../" ]
 
-  sources = [ "execute.cc" ]
+  sources = [ "example.cc" ]
 
   deps = [ "//base" ]
+
+  if (is_win) {
+    deps += [ "//third_party/wtl" ]
+  }
 
   suppressed_configs = [ "//build/config/compiler:thin_archive" ]
 }
