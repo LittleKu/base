@@ -207,6 +207,10 @@ deps = {
     'https://chromium.googlesource.com/webm/libvpx.git@906334ac1de2b0afa666472dce5545b82c1251fb',
   'src/third_party/libyuv':
     'https://chromium.googlesource.com/libyuv/libyuv.git@a8e59d207483f75b87dd5fc670e937672cdf5776',
+  'src/third_party/lss': {
+    'url': 'https://chromium.googlesource.com/linux-syscall-support.git@ce877209e11aa69dcfffbd53ef90ea1d07136521',
+    'condition': 'checkout_android or checkout_linux',
+  },
   'src/third_party/instrumented_libs': {
     'url': Var('chromium_git') + '/chromium/third_party/instrumented_libraries.git' + '@' + 'bb6dbcf2df7a9beb34c3773ef4df161800e3aed9',
     'condition': 'checkout_instrumented_libraries',

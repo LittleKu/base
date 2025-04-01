@@ -3,9 +3,9 @@ import("../base.gni")
 config("example_config") {
   if (is_win) {
     ldflags = [ "/SUBSYSTEM:WINDOWS" ]
-    if (is_clang) {
-      cflags = [ "-Wno-undef" ]
-    }
+  }
+  if (is_clang) {
+    cflags = [ "-Wno-undef" ]
   }
 }
 
