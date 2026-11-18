@@ -1,13 +1,10 @@
 # Enables assertions on safety checks in libc++.
 enable_safe_libcxx = true
 
-# Don't set this variable to true when building stadalone WebRTC, it is
-# only needed to support both WebRTC standalone and Chromium builds.
-build_with_chromium = false
+# Use Chromium integration settings for the extracted base sources.
+build_with_chromium = true
 
 declare_args() {
-  enable_base_tracing = false
-  use_perfetto_client_library = false
   use_perfetto_trace_processor = false
 
   # If true, it assumes that //third_party/abseil-cpp is an available
@@ -15,15 +12,8 @@ declare_args() {
   gtest_enable_absl_printers = true
 }
 
-# Use bundled hermetic Xcode installation maintainted by Chromium,
-# except for local iOS builds where it's unsupported.
-# Allow for mac cross compile on linux machines.
-if (host_os == "mac" || host_os == "linux") {
-  _result = exec_script("//build/mac/should_use_hermetic_xcode.py",
-                        [ target_os ],
-                        "value")
-  assert(_result != 2,
-         "Do not allow building targets with the default " +
-             "hermetic toolchain if the minimum OS version is not met.")
-  use_system_xcode = _result == 0
+if (host_os == "mac" || is_apple) {
+  declare_args() {
+    use_system_xcode = true
+  }
 }

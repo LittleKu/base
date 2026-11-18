@@ -4,9 +4,6 @@ config("example_config") {
   if (is_win) {
     ldflags = [ "/SUBSYSTEM:WINDOWS" ]
   }
-  if (is_clang) {
-    cflags = [ "-Wno-undef" ]
-  }
 }
 
 base_executable("example") {
@@ -23,4 +20,13 @@ base_executable("example") {
   }
 
   suppressed_configs = [ "//build/config/compiler:thin_archive" ]
+}
+
+base_executable("base_smoke_test") {
+  testonly = true
+  sources = [ "base_smoke_test.cc" ]
+  deps = [
+    "//base",
+    "//base/version_info",
+  ]
 }

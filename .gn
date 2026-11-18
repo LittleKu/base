@@ -1,20 +1,27 @@
 import("//build/dotfile_settings.gni")
+import("//build/strict_deps_failures.gni")
 
 # The location of the build configuration file.
 buildconfig = "//build/config/BUILDCONFIG.gn"
+root_patterns = [ "//:default" ]
 
 # The python interpreter to use by default. On Windows, this will look
 # for python3.exe and python3.bat.
 script_executable = "python3"
 
-# These are the list of GN files that run exec_script. This whitelist exists
+# These are the list of GN files that run exec_script. This allowlist exists
 # to force additional review for new uses of exec_script, which is strongly
 # discouraged except for gypi_to_gn calls.
-exec_script_whitelist = build_dotfile_settings.exec_script_whitelist +
-                        [ "//build_overrides/build.gni" ]
+exec_script_allowlist = build_dotfile_settings.exec_script_allowlist
+expand_directory_allowlist = build_dotfile_settings.expand_directory_allowlist
 
 default_args = {
   is_component_build = false
+
+  # Chromium base has Rust dependencies even in standalone builds.
+  enable_rust = true
+  enable_chromium_prelude = true
+  enable_js_protobuf = false
 
   is_perfetto_embedder = true
 

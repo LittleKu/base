@@ -5,6 +5,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/logging/logging_settings.h"
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "build/build_config.h"
@@ -40,12 +41,7 @@ int main(int argc, char** argv) {
   }
 #endif
 
-  {
-    base::FilePath log_prefix;
-    base::PathService::Get(base::FILE_EXE, &log_prefix);
-    logging::SetLogPrefix(
-        log_prefix.RemoveExtension().BaseName().AsUTF8Unsafe().c_str());
-  }
+  logging::SetLogPrefix("example");
 
   logging::SetLogItems(true, true, true, true);
   logging::InitLogging(logging_settings);

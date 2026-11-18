@@ -36,17 +36,7 @@ config("common_config") {
   if (is_clang) {
     cflags += [ "-Wc++11-narrowing" ]
 
-    if (!is_fuchsia) {
-      # Compiling with the Fuchsia SDK results in Wundef errors
-      # TODO(bugs.fuchsia.dev/100722): Remove from (!is_fuchsia) branch when
-      # Fuchsia build errors are fixed.
-      cflags += [ "-Wundef" ]
-    }
-
-    if (!is_nacl) {
-      # Flags NaCl (Clang 3.7) do not recognize.
-      cflags += [ "-Wunused-lambda-capture" ]
-    }
+    cflags += [ "-Wunused-lambda-capture" ]
   }
 
   if (is_win && !is_clang) {
@@ -101,5 +91,9 @@ config("absl_flags_configs") {
 }
 
 group("default") {
-  deps = [ "//examples:example" ]
+  testonly = true
+  deps = [
+    "//examples:base_smoke_test",
+    "//examples:example",
+  ]
 }
