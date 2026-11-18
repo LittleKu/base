@@ -6,19 +6,14 @@
 # in the file PATENTS.  All contributing project authors may
 # be found in the AUTHORS file in the root of the source tree.
 
+import("//build/config/compiler/compiler.gni")
+
 # Use default values for PartitionAlloc as standalone library from
 # base/allocator/partition_allocator/build_overrides/partition_alloc.gni
 
-import("//build/config/android/config.gni")
-import("//build/config/cast.gni")
-import("//build/config/chromeos/ui_mode.gni")
-import("//build/config/compiler/compiler.gni")
-import("//build/config/cronet/config.gni")
-import("//build/config/dcheck_always_on.gni")
-import("//build/config/logging.gni")
-
 use_partition_alloc_as_malloc_default = false
 use_allocator_shim_default = false
+shim_supports_sized_dealloc_default = false
 enable_backup_ref_ptr_support_default = false
 enable_backup_ref_ptr_slow_checks_default = false
 enable_dangling_raw_ptr_checks_default = false

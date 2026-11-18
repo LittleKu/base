@@ -1,0 +1,110 @@
+name: Build and smoke test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DEPOT_TOOLS_UPDATE: "0"
+  GIT_CACHE_PATH: ${{ github.workspace }}/git_cache
+  CIPD_CACHE_DIR: ${{ github.workspace }}/cipd_cache
+  TEMP: ${{ github.workspace }}/work/temp
+  TMP: ${{ github.workspace }}/work/temp
+  TMPDIR: ${{ github.workspace }}/work/temp
+  VPYTHON_VIRTUALENV_ROOT: ${{ github.workspace }}/work/vpython
+
+jobs:
+  windows:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 120
+    env:
+      DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
+    steps:
+      - name: Clone and pin depot_tools
+        shell: cmd
+        run: |
+          if not exist work\temp mkdir work\temp
+          if not exist work\vpython mkdir work\vpython
+          git config --global core.longpaths true
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git depot_tools || exit /b 1
+          git -C depot_tools checkout b86fc981b72ab966f8260f73b4eca600b3b12677 || exit /b 1
+          echo %GITHUB_WORKSPACE%\depot_tools>>%GITHUB_PATH%
+      - name: Install Windows SDK 10.0.28000.2526
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "$env:GITHUB_WORKSPACE\work" -Force | Out-Null
+          $installer = Join-Path $env:GITHUB_WORKSPACE 'work\winsdksetup.exe'
+          Invoke-WebRequest 'https://download.microsoft.com/download/06fc99ac-527e-451e-a536-8866695a2e7e/KIT_BUNDLE_WINDOWSSDK_MEDIACREATION/winsdksetup.exe' -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne '02988EA51EAB2A2DB53E19735E51C97A6D221ADA74B9174FA0868870B9403BA0') {
+            throw 'Windows SDK installer checksum mismatch'
+          }
+          $process = Start-Process $installer -ArgumentList '/q', '/norestart' -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) {
+            throw "Windows SDK installation failed: $($process.ExitCode)"
+          }
+      - name: Sync project and dependencies
+        shell: cmd
+        run: |
+          call gclient config --unmanaged --name=src --cache-dir "%GIT_CACHE_PATH%" "%GITHUB_SERVER_URL%/%GITHUB_REPOSITORY%.git" || exit /b 1
+          call vpython3 depot_tools\gsutil.py version || exit /b 1
+          call gclient sync --no-history --revision "src@%GITHUB_SHA%" || exit /b 1
+      - name: Build
+        working-directory: src
+        shell: cmd
+        run: |
+          buildtools\win\gn.exe gen out\Debug --args="is_debug=true use_siso=false use_remoteexec=false" || exit /b 1
+          third_party\ninja\ninja.exe -C out\Debug default || exit /b 1
+      - name: Run examples
+        working-directory: src
+        shell: cmd
+        run: |
+          out\Debug\base_smoke_test.exe || exit /b 1
+          start /wait "" out\Debug\example.exe
+          if errorlevel 1 exit /b 1
+
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            gn: buildtools/linux64/gn
+          - os: macos-26-intel
+            gn: buildtools/mac/gn
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - name: Clone and pin depot_tools
+        shell: bash
+        run: |
+          mkdir -p work/temp work/vpython
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git depot_tools
+          git -C depot_tools checkout b86fc981b72ab966f8260f73b4eca600b3b12677
+          echo "$GITHUB_WORKSPACE/depot_tools" >> "$GITHUB_PATH"
+      - name: Install Linux build prerequisite
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config
+      - name: Select Xcode
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Sync project and dependencies
+        run: |
+          gclient config --unmanaged --name=src --cache-dir "$GIT_CACHE_PATH" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          vpython3 depot_tools/gsutil.py version
+          gclient sync --no-history --revision "src@$GITHUB_SHA"
+      - name: Build
+        working-directory: src
+        run: |
+          ${{ matrix.gn }} gen out/Debug --args='is_debug=true use_siso=false use_remoteexec=false'
+          third_party/ninja/ninja -C out/Debug default
+      - name: Run examples
+        working-directory: src
+        run: |
+          out/Debug/base_smoke_test
+          out/Debug/example

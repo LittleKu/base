@@ -1,0 +1,11 @@
+/.chromium.git/
+/base/
+/build/
+/buildtools/
+/chrome/VERSION
+/testing/
+/third_party/
+/tools/
+/out/
+__pycache__/
+/.vscode/
