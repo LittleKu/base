@@ -391,6 +391,16 @@ deps = {
     'dep_type': 'cipd',
     'condition': 'host_os == "win"',
   },
+  'buildtools/third_party/mold/cipd': {
+    'packages': [
+      {
+        'package': 'chromium/buildtools/third_party/mold/mold',
+        'version': 'w9QqZ-oP3GovA-zjOawYzb5yca-t47GbT-ejPa0BQmYC',
+      }
+    ],
+    'dep_type': 'cipd',
+    'condition': 'host_os == "linux" and non_git_source',
+  },
   'third_party/compiler-rt/src': Var('chromium_git') +
     '/external/github.com/llvm/llvm-project/compiler-rt.git' + '@' +
     Var('compiler_rt_revision'),

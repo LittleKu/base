@@ -97,7 +97,77 @@ When opening a new terminal, return to `X:\chromium-base`, restore the environme
 
 ### Linux
 
-Instructions to follow.
+#### Prerequisites
+
+These instructions use Ubuntu 26.04 x64 and have been verified on Ubuntu 26.04.1 LTS under WSL 2. In WSL 2, use a directory on the Linux filesystem, such as `~/chromium-base`. Create separate workspaces for Windows and Linux.
+
+Install the build tools and runtime libraries, and ensure network access to GitHub and Chromium's source and dependency download services:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  git python3 python3-venv build-essential pkg-config curl \
+  ca-certificates xz-utils unzip file libglib2.0-0t64 libatomic1
+```
+
+Run all commands in order in **the same Bash terminal**, continuing only after each step succeeds.
+
+#### 1. Create the workspace
+
+```bash
+mkdir -p ~/chromium-base
+cd ~/chromium-base
+
+mkdir -p work/temp work/vpython
+export TEMP="$PWD/work/temp"
+export TMP="$TEMP"
+export TMPDIR="$TEMP"
+export VPYTHON_VIRTUALENV_ROOT="$PWD/work/vpython"
+export CIPD_CACHE_DIR="$PWD/cipd_cache"
+```
+
+#### 2. Install and pin depot_tools
+
+```bash
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git depot_tools
+git -C depot_tools checkout b86fc981b72ab966f8260f73b4eca600b3b12677
+
+export DEPOT_TOOLS_UPDATE=0
+export PATH="$PWD/depot_tools:$PATH"
+```
+
+On Linux, the first `gclient` invocation initializes the required tools automatically.
+
+#### 3. Fetch the repository, sources, and dependencies
+
+```bash
+gclient config --unmanaged --name=src \
+  --cache-dir "$PWD/git_cache" https://github.com/LittleKu/base.git
+vpython3 depot_tools/gsutil.py version
+gclient sync --no-history
+cd src
+```
+
+`gclient sync` creates `src`, syncs the pinned Chromium sources, and installs dependencies including GN, Ninja, Clang, Rust, mold, and the Linux sysroot.
+
+#### 4. Generate Debug build files
+
+```bash
+buildtools/linux64/gn gen out/Debug \
+  --args='is_debug=true use_siso=false use_remoteexec=false'
+```
+
+#### 5. Build and run the examples
+
+```bash
+third_party/ninja/ninja -C out/Debug -j16 default
+out/Debug/base_smoke_test
+out/Debug/example
+```
+
+Reduce the `-j` value to limit parallel jobs and save memory. The smoke test prints `base smoke test passed` on success. The logging example prints `test info log.` in the terminal and exits.
+
+When opening a new terminal, return to `~/chromium-base`, restore the environment variables from steps 1 and 2, then run `cd src`.
 
 ## Upgrade history
 

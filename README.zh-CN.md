@@ -97,7 +97,77 @@ start "" out\Debug\base.sln
 
 ### Linux
 
-使用说明待补充。
+#### 准备工作
+
+以下步骤以 Ubuntu 26.04 x64 为例，已在 WSL 2 的 Ubuntu 26.04.1 LTS 中验证。WSL 2 请将工作目录放在 Linux 文件系统中，例如 `~/chromium-base`；Windows 和 Linux 应分别创建工作区。
+
+安装构建工具和运行时库，并确保能够访问 GitHub 和 Chromium 的源码及依赖下载服务：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  git python3 python3-venv build-essential pkg-config curl \
+  ca-certificates xz-utils unzip file libglib2.0-0t64 libatomic1
+```
+
+在**同一个 Bash 终端**中依次执行以下命令，每一步成功后再继续。
+
+#### 1. 创建工作目录
+
+```bash
+mkdir -p ~/chromium-base
+cd ~/chromium-base
+
+mkdir -p work/temp work/vpython
+export TEMP="$PWD/work/temp"
+export TMP="$TEMP"
+export TMPDIR="$TEMP"
+export VPYTHON_VIRTUALENV_ROOT="$PWD/work/vpython"
+export CIPD_CACHE_DIR="$PWD/cipd_cache"
+```
+
+#### 2. 安装并固定 depot_tools
+
+```bash
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git depot_tools
+git -C depot_tools checkout b86fc981b72ab966f8260f73b4eca600b3b12677
+
+export DEPOT_TOOLS_UPDATE=0
+export PATH="$PWD/depot_tools:$PATH"
+```
+
+Linux 首次运行 `gclient` 时会自动初始化所需工具。
+
+#### 3. 拉取仓库、源码和依赖
+
+```bash
+gclient config --unmanaged --name=src \
+  --cache-dir "$PWD/git_cache" https://github.com/LittleKu/base.git
+vpython3 depot_tools/gsutil.py version
+gclient sync --no-history
+cd src
+```
+
+`gclient sync` 会创建 `src`，同步固定版本的 Chromium 源码，并安装 GN、Ninja、Clang、Rust、mold 和 Linux sysroot 等依赖。
+
+#### 4. 生成 Debug 构建文件
+
+```bash
+buildtools/linux64/gn gen out/Debug \
+  --args='is_debug=true use_siso=false use_remoteexec=false'
+```
+
+#### 5. 编译并运行示例
+
+```bash
+third_party/ninja/ninja -C out/Debug -j16 default
+out/Debug/base_smoke_test
+out/Debug/example
+```
+
+可减小 `-j` 的值以降低编译并发数、节省内存。冒烟测试成功时输出 `base smoke test passed`；日志示例在终端输出 `test info log.` 后退出。
+
+重新打开终端后，先进入 `~/chromium-base`，恢复第 1、2 步中的环境变量，再执行 `cd src`。
 
 ## 升级日志
 
