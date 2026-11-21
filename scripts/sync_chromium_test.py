@@ -10,20 +10,20 @@ import update_lastchange
 
 
 class SyncSourceTest(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {
+            "GIT_CACHE_PATH": "",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_rejects_depot_tools_drift(self):
         with (patch.object(sync_chromium.shutil, "which", return_value="/tools/gclient"),
               patch.object(subprocess, "check_output", return_value="a" * 40)):
             with self.assertRaises(RuntimeError):
                 sync_chromium.check_depot_tools()
-
-    def test_cache_environment(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            mirror = Path(temporary) / "chromium.googlesource.com-chromium-src"
-            with patch.dict(os.environ, {"GIT_CACHE_PATH": temporary}):
-                self.assertEqual(sync_chromium.find_git_cache(), mirror)
-                self.assertFalse(mirror.exists())
-                (mirror / "objects").mkdir(parents=True)
-                self.assertEqual(sync_chromium.find_git_cache(), mirror)
 
     def test_checkout_upgrade_and_local_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -73,8 +73,7 @@ class SyncSourceTest(unittest.TestCase):
             (project / "chrome").mkdir()
             (project / "chrome" / "local.txt").write_text("local", encoding="utf-8")
 
-            with (patch.object(sync_chromium, "CHROMIUM_URL", upstream.as_uri()),
-                  patch.object(sync_chromium, "find_git_cache", return_value=None)):
+            with patch.object(sync_chromium, "CHROMIUM_URL", upstream.as_uri()):
                 for revision, content in ((first, "first"), (first, "first"),
                                           (second, "second")):
                     if revision == second:
@@ -129,26 +128,17 @@ class SyncSourceTest(unittest.TestCase):
                     "config", "base.chromiumRevision"], text=True).strip()
                 self.assertEqual(marked, second)
 
-            cached_project = directory / "cached-project"
-            cached_project.mkdir()
-            mirror = directory / "mirror.git"
-            subprocess.run(["git", "clone", "--mirror", upstream.as_uri(), str(mirror)],
-                           check=True, capture_output=True)
-            with (patch.object(sync_chromium, "CHROMIUM_URL", upstream.as_uri()),
-                  patch.object(sync_chromium, "find_git_cache", return_value=mirror)):
-                sync_chromium.sync_source(cached_project, second)
-                with patch.object(sync_chromium, "CHROMIUM_URL", "file:///does-not-exist"):
-                    sync_chromium.sync_source(cached_project, second)
-                self.assertEqual((cached_project / "base" / "source.cc").read_text(),
-                                 "second")
-                with patch.object(update_lastchange, "subprocess") as process:
-                    process.check_output.side_effect = subprocess.check_output
-                    update_lastchange.update_lastchange(cached_project, first)
-                self.assertEqual(process.run.call_count, 2)
-                for call in process.run.call_args_list:
-                    self.assertEqual(call.kwargs["env"]["BASE_COMMIT_HASH"], first)
-                    self.assertEqual(call.kwargs["env"]["BASE_COMMIT_SUBMISSION_MS"],
-                                     "1794272523000")
+            (project / "base" / "source.cc").write_text("second", encoding="utf-8")
+            with patch.object(sync_chromium, "CHROMIUM_URL", "file:///does-not-exist"):
+                sync_chromium.sync_source(project, second)
+            with patch.object(update_lastchange, "subprocess") as process:
+                process.check_output.side_effect = subprocess.check_output
+                update_lastchange.update_lastchange(project, first)
+            self.assertEqual(process.run.call_count, 2)
+            for call in process.run.call_args_list:
+                self.assertEqual(call.kwargs["env"]["BASE_COMMIT_HASH"], first)
+                self.assertEqual(call.kwargs["env"]["BASE_COMMIT_SUBMISSION_MS"],
+                                 "1794272523000")
 
     def test_rejects_existing_unmanaged_source(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -159,13 +149,13 @@ class SyncSourceTest(unittest.TestCase):
             self.assertFalse((root / ".chromium.git").exists())
 
 
-class SharedCacheTest(unittest.TestCase):
+class LocalCacheTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
         self.upstream = self.directory / "upstream"
-        self.cache_root = self.directory / "cache root"
+        self.cache_root = self.directory / "old cache root"
         self.cache = self.cache_root / "chromium.googlesource.com-chromium-src"
         environment = patch.dict(os.environ, {
             "GIT_CACHE_PATH": str(self.cache_root),
@@ -193,10 +183,13 @@ class SharedCacheTest(unittest.TestCase):
             "third_party/dependency/source.cc": "imported dependency",
             "third_party/blink/source.cc": "excluded blink",
         }.items():
-            path = self.upstream / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            file = self.upstream / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(content, encoding="utf-8")
         self.first = self.commit("first")
+        (self.upstream / "base" / "source.cc").write_text("second base", encoding="utf-8")
+        (self.upstream / "chrome" / "VERSION").write_text("second version", encoding="utf-8")
+        self.second = self.commit("second")
 
     @staticmethod
     def git(*args):
@@ -208,228 +201,180 @@ class SharedCacheTest(unittest.TestCase):
         self.git("-C", self.upstream, "commit", "-m", message)
         return self.git("-C", self.upstream, "rev-parse", "HEAD")
 
-    def second_commit(self):
-        (self.upstream / "base" / "source.cc").write_text("second base", encoding="utf-8")
-        (self.upstream / "chrome" / "VERSION").write_text("second version", encoding="utf-8")
-        return self.commit("second")
-
-    def extra_refs(self):
-        current_branch = self.git("-C", self.upstream, "symbolic-ref", "--short", "HEAD")
-        self.git("-C", self.upstream, "checkout", "-b", "extra-branch", self.first)
-        (self.upstream / "branch-only.txt").write_text("other branch", encoding="utf-8")
-        branch_commit = self.commit("other branch")
-        self.git("-C", self.upstream, "tag", "-a", "cache-tag", "-m", "annotated tag")
-        self.git("-C", self.upstream, "update-ref", "refs/branch-heads/1234", branch_commit)
-        self.git("-C", self.upstream, "checkout", current_branch)
-        return {ref: self.git("-C", self.upstream, "rev-parse", ref) for ref in (
-            "refs/heads/extra-branch", "refs/tags/cache-tag", "refs/branch-heads/1234")}
-
     def project(self, name):
         project = self.directory / name
         project.mkdir()
         return project
 
-    def cache_has_object(self, object_id, git_dir=None):
+    @staticmethod
+    def has_object(git_dir, object_id):
         return subprocess.run(
-            ["git", "--git-dir=" + str(git_dir or self.cache), "cat-file", "-e", object_id],
+            ["git", "--git-dir=" + str(git_dir), "cat-file", "-e", object_id],
             capture_output=True,
             env=dict(os.environ, GIT_NO_LAZY_FETCH="1")).returncode == 0
 
-    def assert_complete_cache(self):
+    @staticmethod
+    def repository_files(repository):
+        return {file.relative_to(repository): file.read_bytes()
+                for file in repository.rglob("*") if file.is_file()}
+
+    def assert_complete_revision(self, repository, revision):
         with patch.dict(os.environ, {"GIT_NO_LAZY_FETCH": "1"}):
-            objects = self.git("--git-dir=" + str(self.cache), "rev-list", "--objects",
-                               "--missing=print", "--no-object-names", "--all")
+            objects = self.git("--git-dir=" + str(repository), "rev-list", "--objects",
+                               "--missing=print", "--no-object-names", revision + "^{tree}")
         self.assertFalse(any(line.startswith("?") for line in objects.splitlines()))
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "rev-parse", "--is-shallow-repository"),
-            "false")
+        for file in ("base/source.cc", "chrome/VERSION", ".gn", "chrome/browser.cc",
+                     "third_party/blink/source.cc"):
+            blob = self.git("-C", self.upstream, "rev-parse", revision + ":" + file)
+            self.assertTrue(self.has_object(repository, blob), file)
 
-    def test_without_environment_uses_local_cache_despite_git_config(self):
-        configured_cache = self.directory / "configured cache"
+    def create_legacy_snapshot(self, project, revision, source_git):
+        snapshot = project / ".chromium.git"
+        if not snapshot.exists():
+            self.git("init", "--bare", snapshot)
+        if source_git != snapshot:
+            (snapshot / "objects" / "info" / "alternates").write_text(
+                (source_git / "objects").as_posix() + "\n", encoding="utf-8", newline="\n")
+        command = ["git", "--git-dir=" + str(snapshot), "--work-tree=" + str(project)]
+        source_command = ["git", "--git-dir=" + str(source_git)]
+        for key, value in (("user.name", "Test"), ("user.email", "test@example.invalid"),
+                           ("remote.origin.url", self.upstream.as_uri()),
+                           ("remote.origin.promisor", "true"),
+                           ("remote.origin.partialclonefilter", "blob:none")):
+            self.git(*command[1:], "config", key, value)
+
+        def entries(*args):
+            return subprocess.check_output(source_command + ["ls-tree", "-z", *args])
+
+        def tree(data):
+            return subprocess.check_output(
+                source_command + ["mktree", "-z", "--missing"], input=data).strip()
+
+        third_party = b"".join(
+            entry + b"\0" for entry in entries(revision + ":third_party").split(b"\0")
+            if entry and entry.split(b"\t", 1)[1] != b"blink")
+        third_party_tree = tree(third_party)
+        chrome_tree = tree(entries(revision + ":chrome", "--", "VERSION"))
+        root_entries = entries(revision, "--", "base")
+        root_entries += b"040000 tree " + third_party_tree + b"\tthird_party\0"
+        root_entries += b"040000 tree " + chrome_tree + b"\tchrome\0"
+        snapshot_tree = tree(root_entries).decode("ascii")
+        commit = self.git(*command[1:], "commit-tree", snapshot_tree, "-m", "Legacy snapshot")
+        self.git(*command[1:], "checkout", "--detach", commit)
+        self.git(*command[1:], "config", "base.chromiumRevision", revision)
+        return commit
+
+    def test_ignores_external_caches_and_fetches_complete_shallow_revision(self):
+        self.git("-C", self.upstream, "checkout", "-b", "extra-branch", self.first)
+        (self.upstream / "branch-only.txt").write_text("other branch", encoding="utf-8")
+        extra_commit = self.commit("other branch")
+        self.git("-C", self.upstream, "checkout", "--detach", self.second)
+        self.git("clone", "--mirror", self.upstream.as_uri(), self.cache)
+        original_cache = self.repository_files(self.cache)
         global_config = self.directory / "gitconfig"
-        self.git("config", "--file", global_config, "cache.cachepath", configured_cache)
-        second = self.second_commit()
+        self.git("config", "--file", global_config, "cache.cachepath", self.cache_root)
+
+        for index, cache_environment in enumerate((str(self.cache_root), "")):
+            with self.subTest(cache_environment=cache_environment):
+                project = self.project("project-" + str(index))
+                with patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(global_config),
+                                             "GIT_CACHE_PATH": cache_environment}):
+                    sync_chromium.sync_source(project, self.second)
+                local = project / ".chromium.git"
+                self.assert_complete_revision(local, self.second)
+                self.assertFalse(self.has_object(local, self.first))
+                self.assertFalse(self.has_object(local, extra_commit))
+                self.assertEqual(self.git("--git-dir=" + str(local), "rev-parse",
+                                          "--is-shallow-repository"), "true")
+                self.assertFalse((local / "objects" / "info" / "alternates").exists())
+                self.assertEqual((project / "base" / "source.cc").read_text(), "second base")
+                self.assertFalse((project / "third_party" / "blink").exists())
+                self.assertFalse((project / "chrome" / "browser.cc").exists())
+                self.assertFalse((project / ".gn").exists())
+                self.assertEqual(self.repository_files(self.cache), original_cache)
+
+    def test_migrates_existing_partial_local_cache(self):
         project = self.project("project")
-        with patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(global_config)}):
-            os.environ.pop("GIT_CACHE_PATH", None)
-            sync_chromium.sync_source(project, second)
-
-        local_cache = project / ".chromium.git"
-        self.assertTrue(self.cache_has_object(second, git_dir=local_cache))
-        self.assertFalse(self.cache_has_object(self.first, git_dir=local_cache))
-        self.assertEqual((project / "base" / "source.cc").read_text(), "second base")
-        self.assertEqual(
-            self.git("--git-dir=" + str(local_cache), "rev-parse", "--is-shallow-repository"),
-            "true")
-        for path in (".gn", "chrome/browser.cc", "third_party/blink/source.cc"):
-            object_id = self.git("-C", self.upstream, "rev-parse", second + ":" + path)
-            self.assertFalse(self.cache_has_object(object_id, git_dir=local_cache), path)
-        self.assertFalse(configured_cache.exists())
-        self.assertFalse(self.cache_root.exists())
-
-    def test_populates_full_cache_and_reuses_it_across_projects(self):
-        extra_refs = self.extra_refs()
-        first_project = self.project("first-project")
-        sync_chromium.sync_source(first_project, self.first)
-        self.assertEqual((first_project / "base" / "source.cc").read_text(), "first base")
-        self.assertEqual((first_project / "third_party" / "README.md").read_text(),
-                         "imported third party metadata")
-        self.assertFalse((first_project / "third_party" / "blink").exists())
-        self.assertFalse((first_project / "chrome" / "browser.cc").exists())
-        self.assertFalse((first_project / ".gn").exists())
-
-        # Shared caches contain complete Chromium source, including files that
-        # this project does not import into its worktree.
-        for path in ("base/source.cc", "chrome/VERSION", "third_party/README.md",
-                     "third_party/dependency/source.cc"):
-            object_id = self.git("-C", self.upstream, "rev-parse", self.first + ":" + path)
-            self.assertTrue(self.cache_has_object(object_id), path)
-        for path in (".gn", "chrome/browser.cc", "third_party/blink/source.cc"):
-            object_id = self.git("-C", self.upstream, "rev-parse", self.first + ":" + path)
-            self.assertTrue(self.cache_has_object(object_id), path)
-        for ref, object_id in extra_refs.items():
-            self.assertEqual(self.git("--git-dir=" + str(self.cache), "rev-parse", ref), object_id)
-        branch_blob = self.git("-C", self.upstream, "rev-parse", "extra-branch:branch-only.txt")
-        self.assertTrue(self.cache_has_object(branch_blob))
-        self.assert_complete_cache()
-        cache_head = (self.cache / "HEAD").read_bytes()
-        self.assertFalse((self.cache / "index").exists())
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "rev-parse",
-                     "refs/chromium-base/" + self.first), self.first)
-
-        second = self.second_commit()
-        self.assertFalse(self.cache_has_object(second))
-        sync_chromium.sync_source(first_project, second)
-        self.assertTrue(self.cache_has_object(second))
-        self.assertEqual((first_project / "base" / "source.cc").read_text(), "second base")
-        second_blob = self.git("-C", self.upstream, "rev-parse", second + ":base/source.cc")
-        self.assertTrue(self.cache_has_object(second_blob))
-        self.assert_complete_cache()
-        project_head = self.git("--git-dir=" + str(first_project / ".chromium.git"),
-                                "rev-parse", "HEAD")
-
-        second_project = self.project("second-project")
-        with patch.object(sync_chromium, "CHROMIUM_URL", "file:///does-not-exist"):
-            sync_chromium.sync_source(second_project, self.first)
-            sync_chromium.sync_source(first_project, second)
-        self.assertEqual((second_project / "base" / "source.cc").read_text(), "first base")
-        self.assertEqual((first_project / "base" / "source.cc").read_text(), "second base")
-        self.assertEqual(
-            self.git("--git-dir=" + str(first_project / ".chromium.git"),
-                     "rev-parse", "HEAD"), project_head)
-        self.assertEqual((self.cache / "HEAD").read_bytes(), cache_head)
-        self.assertFalse((self.cache / "index").exists())
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "rev-parse",
-                     "refs/chromium-base/" + second), second)
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "rev-parse",
-                     "refs/chromium-base/" + self.first), self.first)
-        alternates = first_project / ".chromium.git" / "objects" / "info" / "alternates"
-        self.assertEqual(alternates.read_bytes(),
-                         ((self.cache / "objects").as_posix() + "\n").encode("utf-8"))
-
-    def test_migrates_shallow_partial_cache_even_when_target_is_present(self):
-        extra_refs = self.extra_refs()
-        second = self.second_commit()
+        local = project / ".chromium.git"
         self.git("clone", "--bare", "--depth=1", "--filter=blob:none",
-                 "--single-branch", "--no-tags", self.upstream.as_uri(), self.cache)
-        self.assertTrue(self.cache_has_object(second))
-        self.assertFalse(self.cache_has_object(self.first))
-        blink_blob = self.git("-C", self.upstream, "rev-parse", second + ":third_party/blink/source.cc")
-        self.assertFalse(self.cache_has_object(blink_blob))
-
-        project = self.project("project")
-        sync_chromium.sync_source(project, second)
-        self.assert_complete_cache()
-        self.assertTrue(self.cache_has_object(self.first))
-        self.assertTrue(self.cache_has_object(blink_blob))
-        old_blob = self.git("-C", self.upstream, "rev-parse", self.first + ":base/source.cc")
-        self.assertTrue(self.cache_has_object(old_blob))
-        for ref, object_id in extra_refs.items():
-            self.assertEqual(self.git("--git-dir=" + str(self.cache), "rev-parse", ref), object_id)
+                 "--single-branch", "--no-tags", self.upstream.as_uri(), local)
+        self.create_legacy_snapshot(project, self.second, local)
+        blink_blob = self.git("-C", self.upstream, "rev-parse",
+                              self.second + ":third_party/blink/source.cc")
+        self.assertFalse(self.has_object(local, blink_blob))
+        sync_chromium.sync_source(project, self.second)
+        self.assert_complete_revision(local, self.second)
+        self.assertFalse(self.has_object(local, self.first))
         self.assertEqual((project / "base" / "source.cc").read_text(), "second base")
         self.assertFalse((project / "third_party" / "blink").exists())
         with patch.object(sync_chromium, "CHROMIUM_URL", "file:///does-not-exist"):
-            sync_chromium.sync_source(self.project("offline-project"), self.first)
+            sync_chromium.sync_source(project, self.second)
+        self.assertFalse(self.cache_root.exists())
 
-    def test_switching_caches_populates_the_new_cache(self):
+    def test_partial_migration_fills_objects_for_older_revision_pins(self):
+        (self.upstream / ".gn").write_text("new upstream root file", encoding="utf-8")
+        target = self.commit("new root file")
         project = self.project("project")
-        sync_chromium.sync_source(project, self.first)
-        new_cache_root = self.directory / "new cache root"
-        new_cache = new_cache_root / "chromium.googlesource.com-chromium-src"
-        with patch.dict(os.environ, {"GIT_CACHE_PATH": str(new_cache_root)}):
-            # The existing checkout can read objects from its old alternates,
-            # but the newly selected cache must also receive those objects.
-            sync_chromium.sync_source(project, self.first)
-            blob = self.git("-C", self.upstream, "rev-parse", self.first + ":base/source.cc")
-            self.assertTrue(self.cache_has_object(blob, git_dir=new_cache))
-            fresh_project = self.project("fresh-project")
-            with patch.object(sync_chromium, "CHROMIUM_URL", "file:///does-not-exist"):
-                sync_chromium.sync_source(fresh_project, self.first)
-            self.assertEqual((fresh_project / "base" / "source.cc").read_text(), "first base")
+        local = project / ".chromium.git"
+        self.git("init", "--bare", local)
+        for key, value in (("remote.origin.url", self.upstream.as_uri()),
+                           ("remote.origin.promisor", "true"),
+                           ("remote.origin.partialclonefilter", "blob:none")):
+            self.git("--git-dir=" + str(local), "config", key, value)
+        for revision in (self.first, target):
+            self.git("--git-dir=" + str(local), "fetch", "--depth=1", "--filter=blob:none",
+                     "origin", revision + ":refs/chromium-base/" + revision)
+            self.create_legacy_snapshot(project, revision, local)
 
-        alternates = project / ".chromium.git" / "objects" / "info" / "alternates"
-        self.assertEqual(alternates.read_text().splitlines(), [
-            (self.cache / "objects").as_posix(),
-            (new_cache / "objects").as_posix(),
-        ])
-
-    def test_updating_full_cache_preserves_head_index_and_history(self):
-        self.git("clone", "--mirror", self.upstream.as_uri(), self.cache)
-        self.git("--git-dir=" + str(self.cache), "config", "--unset-all", "remote.origin.fetch")
-        for refspec in ("+refs/heads/*:refs/heads/*",
-                        "+refs/branch-heads/*:refs/branch-heads/*",
-                        "+refs/tags/*:refs/tags/*"):
-            self.git("--git-dir=" + str(self.cache), "config", "--add", "remote.origin.fetch", refspec)
-        original_fetch = self.git("--git-dir=" + str(self.cache), "config", "--get-all",
-                                  "remote.origin.fetch")
-        self.git("--git-dir=" + str(self.cache), "config", "user.name", "Cache owner")
-        self.git("--git-dir=" + str(self.cache), "read-tree", self.first)
-        (self.cache / "FETCH_HEAD").write_text("existing fetch metadata\n", encoding="utf-8")
-        original = {name: (self.cache / name).read_bytes()
-                    for name in ("HEAD", "index", "FETCH_HEAD")}
-        second = self.second_commit()
-        project = self.project("project")
-        sync_chromium.sync_source(project, second)
-
-        self.assertEqual((project / "base" / "source.cc").read_text(), "second base")
-        for name, contents in original.items():
-            self.assertEqual((self.cache / name).read_bytes(), contents, name)
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "rev-parse", "HEAD"), second)
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "rev-parse", "--is-shallow-repository"),
-            "false")
-        self.git("--git-dir=" + str(self.cache), "merge-base", "--is-ancestor", self.first, second)
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "config", "user.name"), "Cache owner")
-
-        # Upstream ref updates must not inherit pruning that would remove pins
-        # for old project snapshots, which do not exist on the remote.
-        snapshot_tree = self.git("--git-dir=" + str(project / ".chromium.git"),
-                                 "rev-parse", "HEAD^{tree}")
-        snapshot_ref = "refs/chromium-base/trees/" + snapshot_tree
-        self.git("--git-dir=" + str(self.cache), "config", "fetch.prune", "true")
-        self.git("--git-dir=" + str(self.cache), "config", "fetch.pruneTags", "true")
-        (self.upstream / "base" / "source.cc").write_text("third base", encoding="utf-8")
-        third = self.commit("third")
-        sync_chromium.sync_source(self.project("new-project"), third)
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "rev-parse", snapshot_ref), snapshot_tree)
-        self.assertEqual(
-            self.git("--git-dir=" + str(self.cache), "config", "--get-all", "remote.origin.fetch"),
-            original_fetch)
-
-        # Cache cleanup must retain the synthetic trees borrowed by snapshots.
-        self.git("--git-dir=" + str(self.cache), "prune", "--expire=now")
+        old_root_blob = self.git("-C", self.upstream, "rev-parse", self.first + ":.gn")
+        self.assertFalse(self.has_object(local, old_root_blob))
+        sync_chromium.sync_source(project, target)
+        self.assert_complete_revision(local, self.first)
+        self.assert_complete_revision(local, target)
         with patch.dict(os.environ, {"GIT_NO_LAZY_FETCH": "1"}):
-            for path, contents in (("base/source.cc", "second base"),
-                                   ("chrome/VERSION", "second version")):
-                self.assertEqual(
-                    self.git("--git-dir=" + str(project / ".chromium.git"),
-                             "show", "HEAD:" + path), contents)
+            objects = self.git("--git-dir=" + str(local), "rev-list", "--objects",
+                               "--missing=print", "--no-object-names", "--all", "--reflog")
+            self.assertFalse(any(line.startswith("?") for line in objects.splitlines()))
+            self.assertEqual(self.git("--git-dir=" + str(local), "show", self.first + ":.gn"),
+                             "upstream root file")
+        for key in ("remote.origin.promisor", "remote.origin.partialclonefilter",
+                    "extensions.partialclone"):
+            config = subprocess.run(
+                ["git", "--git-dir=" + str(local), "config", "--local", "--get", key],
+                capture_output=True)
+            self.assertEqual(config.returncode, 1, key)
+        self.assertEqual(self.git("--git-dir=" + str(local), "rev-parse",
+                                  "--is-shallow-repository"), "true")
+
+    def test_migrates_borrowed_snapshot_without_retaining_cache_dependency(self):
+        self.git("clone", "--mirror", self.upstream.as_uri(), self.cache)
+        project = self.project("project")
+        local = project / ".chromium.git"
+        snapshot = self.create_legacy_snapshot(project, self.first, self.cache)
+        original_cache = self.repository_files(self.cache)
+        source_file = project / "base" / "source.cc"
+        source_file.write_text("local change", encoding="utf-8")
+        with self.assertRaises(subprocess.CalledProcessError):
+            sync_chromium.sync_source(project, self.second)
+        self.assertTrue((local / "objects" / "info" / "alternates").exists())
+        self.assertEqual(source_file.read_text(), "local change")
+        source_file.write_text("first base", encoding="utf-8")
+        sync_chromium.sync_source(project, self.second)
+        self.assertFalse((local / "objects" / "info" / "alternates").exists())
+        self.assertEqual(self.repository_files(self.cache), original_cache)
+
+        moved_cache = self.directory / "unavailable-cache"
+        self.assertTrue(self.cache.resolve().is_relative_to(self.directory.resolve()))
+        self.assertTrue(moved_cache.resolve().is_relative_to(self.directory.resolve()))
+        self.cache.rename(moved_cache)
+        with patch.dict(os.environ, {"GIT_NO_LAZY_FETCH": "1"}):
+            self.assertEqual(self.git("--git-dir=" + str(local), "show",
+                                      snapshot + ":base/source.cc"), "first base")
+            self.assertEqual(self.git("--git-dir=" + str(local), "show",
+                                      "HEAD:chrome/VERSION"), "second version")
+        self.assert_complete_revision(local, self.second)
+        with patch.object(sync_chromium, "CHROMIUM_URL", "file:///does-not-exist"):
+            sync_chromium.sync_source(project, self.second)
 
 
 if __name__ == "__main__":

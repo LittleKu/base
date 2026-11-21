@@ -4,6 +4,7 @@
 import argparse
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,13 +27,6 @@ def check_depot_tools():
                            "; active version is " + actual)
 
 
-def find_git_cache():
-    cache_root = os.environ.get("GIT_CACHE_PATH")
-    if cache_root:
-        return Path(cache_root) / "chromium.googlesource.com-chromium-src"
-    return None
-
-
 def read_git_config(git, key):
     result = git("config", "--get", key, capture_output=True, text=True, check=False)
     if result.returncode == 1:
@@ -41,170 +35,138 @@ def read_git_config(git, key):
     return result.stdout.strip()
 
 
-def update_shared_cache(cache_git, revision, present):
-    # A shared depot_tools cache must also serve full Chromium checkouts.
-    # Upgrade caches created by older versions before allowing offline reuse.
-    partial_keys = ("remote.origin.promisor", "remote.origin.partialclonefilter",
-                    "extensions.partialclone")
-    partial = {key: read_git_config(cache_git, key) for key in partial_keys}
-    shallow = cache_git("rev-parse", "--is-shallow-repository",
-                        capture_output=True, text=True).stdout.strip() == "true"
-    complete = read_git_config(cache_git, "base.fullCache") == "true"
-    if complete and present and not shallow and not any(partial.values()):
-        return
-
-    cache_git("config", "base.fullCache", "false")
-    options = ["--no-filter", "--tags", "--no-prune", "--no-prune-tags",
-               "--no-write-fetch-head", "--recurse-submodules=no"]
-    if shallow:
-        options.append("--unshallow")
-    if any(partial.values()):
-        # Normal negotiation can skip blobs promised by an earlier partial fetch.
-        options.append("--refetch")
-    cache_git("fetch", *options, "origin", "+refs/*:refs/*",
-              revision + ":refs/chromium-base/" + revision)
-    if cache_git("rev-parse", "--is-shallow-repository", capture_output=True,
-                 text=True).stdout.strip() != "false":
-        raise RuntimeError("The shared Chromium cache still has shallow history")
-    # Also fill objects referenced by older local pins that the current remote
-    # refs may no longer reach. Do not declare a partial cache complete on failure.
-    fetch_missing_objects(cache_git, "--all", filtered=False)
-    for key, value in partial.items():
-        if value is not None:
-            cache_git("config", "--unset-all", key)
-    cache_git("config", "base.fullCache", "true")
-
-
-def fetch_missing_objects(cache_git, revision, filtered=True):
-    # Local caches need only the projected source; shared caches need every
-    # object reachable from their refs, including full history and Blink.
-    fetched = set()
-    while True:
-        objects = cache_git("rev-list", "--objects", "--missing=print", "--quiet",
-                            revision, capture_output=True,
-                            env=dict(os.environ, GIT_NO_LAZY_FETCH="1")).stdout
-        missing = {line[1:] for line in objects.splitlines()
-                   if line.startswith(b"?")}
-        if not missing:
-            return
-        if missing & fetched:
-            raise RuntimeError("Chromium cache still lacks requested source objects")
-        # Match Git's lazy-fetch options: normal negotiation can treat a
-        # promised blob as already reachable and omit it from the response.
-        cache_git("-c", "fetch.negotiationAlgorithm=noop", "fetch",
-                  "--no-tags" if filtered else "--tags", "--no-write-fetch-head",
-                  "--no-prune", "--no-prune-tags", "--recurse-submodules=no",
-                  "--filter=blob:none" if filtered else "--no-filter", "--stdin", "origin",
-                  input=b"\n".join(sorted(missing)) + b"\n")
-        fetched.update(missing)
-
-
 def sync_source(root, revision):
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Chromium revision must be a full lowercase commit SHA")
+
+    def run_git(command, **kwargs):
+        display = (subprocess.list2cmdline(command) if os.name == "nt"
+                   else shlex.join(command))
+        print("+ " + display, flush=True)
+        return subprocess.run(command, **kwargs)
+
     root = Path(root).resolve()
     managed_paths = (*SOURCE_DIRS, "chrome/VERSION")
-    # Each project needs its own HEAD/index for the imported source snapshot.
-    # Source objects and projected trees use the shared cache when configured.
-    snapshot_dir = root / ".chromium.git"
-    cache = find_git_cache()
-    git_dir = cache.resolve() if cache else snapshot_dir
-    if not snapshot_dir.exists():
+    git_dir = root / ".chromium.git"
+    if not git_dir.exists():
         existing = [name for name in managed_paths if (root / name).exists()]
         if existing:
             raise RuntimeError("Use a fresh checkout; existing source directories: " +
                                ", ".join(existing))
-        subprocess.run(["git", "init", "--bare", str(snapshot_dir)], check=True)
+        run_git(["git", "init", "--bare", str(git_dir)], check=True)
 
-    command = ["git", "-c", "core.longpaths=true", "--git-dir=" + str(snapshot_dir),
+    command = ["git", "-c", "core.longpaths=true", "--git-dir=" + str(git_dir),
                "--work-tree=" + str(root)]
 
-    def git(*args, **kwargs):
-        return subprocess.run(command + list(args), check=True, **kwargs)
+    def git(*args, check=True, **kwargs):
+        return run_git(command + list(args), check=check, **kwargs)
 
     git("config", "remote.origin.url", CHROMIUM_URL)
-    git("config", "remote.origin.promisor", "true")
-    git("config", "remote.origin.partialclonefilter", "blob:none")
     git("config", "user.name", "Chromium source snapshot")
     git("config", "user.email", "source-snapshot@example.invalid")
 
-    head = subprocess.run(command + ["rev-parse", "--verify", "HEAD"],
-                          capture_output=True, text=True)
+    head = git("rev-parse", "--verify", "HEAD", check=False,
+               capture_output=True, text=True)
     if head.returncode == 0:
         git("diff", "--exit-code", "--ignore-submodules", "--", *managed_paths)
         git("diff", "--cached", "--exit-code", "--", *managed_paths)
 
-    new_cache = not git_dir.exists()
-    if new_cache:
-        subprocess.run(["git", "init", "--bare", str(git_dir)], check=True)
-    cache_command = ["git", "-c", "core.longpaths=true",
-                     "--git-dir=" + str(git_dir)]
+    partial_keys = ("remote.origin.promisor", "remote.origin.partialclonefilter",
+                    "extensions.partialclone")
+    partial = {key: read_git_config(git, key) for key in partial_keys}
+    alternates = git_dir / "objects" / "info" / "alternates"
+    no_lazy_fetch = dict(os.environ, GIT_NO_LAZY_FETCH="1")
+    present = git("cat-file", "-e", revision + "^{commit}", check=False,
+                  capture_output=True, env=no_lazy_fetch)
+    missing = b""
+    if present.returncode == 0:
+        missing = git("rev-list", "--objects", "--missing=print", "--quiet",
+                      revision + "^{tree}", capture_output=True,
+                      env=no_lazy_fetch).stdout
+    if (present.returncode or missing or any(partial.values()) or
+            alternates.exists() or not (git_dir / "shallow").exists()):
+        # Old partial/borrowed repositories need an actual transfer even when
+        # the target commit is visible, so every file of this revision is local.
+        refetch = ["--refetch"] if (missing or any(partial.values()) or
+                                    alternates.exists()) else []
+        git("fetch", "--depth=1", "--no-filter", *refetch, "--no-tags",
+            "--no-prune", "--no-prune-tags", "--no-write-fetch-head",
+            "--recurse-submodules=no", "origin",
+            revision + ":refs/chromium-base/" + revision)
+    git("rev-list", "--objects", "--missing=error", revision + "^{tree}",
+        stdout=subprocess.DEVNULL, env=no_lazy_fetch)
+    git("update-ref", "refs/chromium-base/" + revision, revision)
 
-    def cache_git(*args, check=True, **kwargs):
-        return subprocess.run(cache_command + list(args), check=check, **kwargs)
-
-    if git_dir != snapshot_dir:
-        cache_git("config", "remote.origin.url", CHROMIUM_URL)
-
-    present = subprocess.run(
-        cache_command + ["cat-file", "-e", revision + "^{commit}"],
-        capture_output=True, env=dict(os.environ, GIT_NO_LAZY_FETCH="1"))
-    if git_dir != snapshot_dir:
-        update_shared_cache(cache_git, revision, present.returncode == 0)
-    elif present.returncode:
-        cache_git("fetch", "--depth=1", "--filter=blob:none", "--no-tags",
-                  "--no-write-fetch-head", "--recurse-submodules=no", "origin",
-                  revision + ":refs/chromium-base/" + revision)
-    # The project's snapshot cannot keep borrowed objects alive during cache GC.
-    cache_git("update-ref", "refs/chromium-base/" + revision, revision)
-
-    if git_dir != snapshot_dir:
-        alternates = snapshot_dir / "objects" / "info" / "alternates"
-        paths = (alternates.read_text(encoding="utf-8").splitlines()
-                 if alternates.exists() else [])
-        objects = (git_dir / "objects").as_posix()
-        if objects not in paths:
-            # Keep older caches visible when changing GIT_CACHE_PATH so existing
-            # snapshots and their local-change checks can still read old objects.
-            alternates.write_text("\n".join([*paths, objects]) + "\n",
-                                  encoding="utf-8", newline="\n")
+    def finish_migration():
+        if any(partial.values()):
+            # Older runs may have pinned other partially fetched revisions.
+            # Complete their reachable objects before removing promisor settings.
+            fetched = set()
+            while True:
+                objects = git("rev-list", "--objects", "--all", "--reflog",
+                              "--missing=print", "--quiet", capture_output=True,
+                              env=no_lazy_fetch).stdout
+                missing = {line[1:] for line in objects.splitlines()
+                           if line.startswith(b"?")}
+                if not missing:
+                    break
+                if missing & fetched:
+                    raise RuntimeError("Chromium repository still lacks requested objects")
+                git("-c", "fetch.negotiationAlgorithm=noop", "fetch", "--no-filter",
+                    "--no-tags", "--no-prune", "--no-prune-tags",
+                    "--no-write-fetch-head", "--recurse-submodules=no", "--stdin", "origin",
+                    input=b"\n".join(sorted(missing)) + b"\n")
+                fetched.update(missing)
+        if alternates.exists():
+            # Copy only objects reachable from this project's refs/reflog.
+            # Repacking a promisor repository could copy entire shared packs.
+            git("pack-objects", "--revs", "--all", "--reflog",
+                "--no-use-bitmap-index", str(git_dir / "objects" / "pack" / "pack"),
+                input=b"", capture_output=True)
+            original = alternates.read_bytes()
+            alternates.unlink()
+            try:
+                git("rev-list", "--objects", "--all", "--reflog", "--missing=error",
+                    stdout=subprocess.DEVNULL, env=no_lazy_fetch)
+            except BaseException:
+                alternates.write_bytes(original)
+                raise
+        for key, value in partial.items():
+            if value is not None:
+                git("config", "--unset-all", key)
 
     def make_tree(entries):
-        return cache_git("mktree", "-z", "--missing", input=entries,
-                         capture_output=True).stdout.strip()
+        return git("mktree", "-z", input=entries, capture_output=True).stdout.strip()
 
-    # Blink is unrelated to standalone base and dominates the source checkout.
-    third_party = cache_git("ls-tree", "-z", revision + ":third_party",
-                            capture_output=True).stdout
+    # Keep the complete revision in Git, but import only the standalone sources.
+    third_party = git("ls-tree", "-z", revision + ":third_party",
+                      capture_output=True).stdout
     third_party = b"".join(entry + b"\0" for entry in third_party.split(b"\0")
                           if entry and entry.split(b"\t", 1)[1] != b"blink")
     third_party_tree = make_tree(third_party)
-    chrome_version = cache_git("ls-tree", "-z", revision + ":chrome", "--", "VERSION",
-                               capture_output=True).stdout
+    chrome_version = git("ls-tree", "-z", revision + ":chrome", "--", "VERSION",
+                         capture_output=True).stdout
     chrome_tree = make_tree(chrome_version)
     # Track only imported directories so upstream root files cannot touch ours.
     directories = [name for name in SOURCE_DIRS if name != "third_party"]
-    entries = cache_git("ls-tree", "-z", revision, "--", *directories,
-                        capture_output=True).stdout
+    entries = git("ls-tree", "-z", revision, "--", *directories,
+                  capture_output=True).stdout
     entries += b"040000 tree " + third_party_tree + b"\tthird_party\0"
     entries += b"040000 tree " + chrome_tree + b"\tchrome\0"
     tree = make_tree(entries).decode("ascii")
-    # These projected trees are absent from the upstream commit. Keep them
-    # reachable in the cache even though snapshot commits belong to projects.
-    cache_git("update-ref", "refs/chromium-base/trees/" + tree, tree)
-    if git_dir == snapshot_dir:
-        fetch_missing_objects(cache_git, tree)
     if head.returncode == 0:
-        current = subprocess.run(command + ["config", "base.chromiumRevision"],
-                                 capture_output=True, text=True).stdout.strip()
+        current = git("config", "base.chromiumRevision", check=False,
+                      capture_output=True, text=True).stdout.strip()
         current_tree = git("rev-parse", "HEAD^{tree}", capture_output=True,
                            text=True).stdout.strip()
         if current == revision and current_tree == tree:
+            finish_migration()
             return
     commit = git("commit-tree", tree, "-m", "Chromium " + revision,
                  capture_output=True, text=True).stdout.strip()
     git("checkout", "--no-overwrite-ignore", "--detach", commit)
     git("config", "base.chromiumRevision", revision)
+    finish_migration()
 
 
 if __name__ == "__main__":

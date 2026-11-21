@@ -10,7 +10,6 @@ permissions:
 
 env:
   DEPOT_TOOLS_UPDATE: "0"
-  GIT_CACHE_PATH: ${{ github.workspace }}/git_cache
   CIPD_CACHE_DIR: ${{ github.workspace }}/cipd_cache
   TEMP: ${{ github.workspace }}/work/temp
   TMP: ${{ github.workspace }}/work/temp
@@ -49,7 +48,7 @@ jobs:
       - name: Sync project and dependencies
         shell: cmd
         run: |
-          call gclient config --unmanaged --name=src --cache-dir "%GIT_CACHE_PATH%" "%GITHUB_SERVER_URL%/%GITHUB_REPOSITORY%.git" || exit /b 1
+          call gclient config --unmanaged --name=src --cache-dir "%GITHUB_WORKSPACE%\git_cache" "%GITHUB_SERVER_URL%/%GITHUB_REPOSITORY%.git" || exit /b 1
           call vpython3 depot_tools\gsutil.py version || exit /b 1
           call gclient sync --no-history --revision "src@%GITHUB_SHA%" || exit /b 1
       - name: Build
@@ -95,7 +94,7 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
       - name: Sync project and dependencies
         run: |
-          gclient config --unmanaged --name=src --cache-dir "$GIT_CACHE_PATH" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          gclient config --unmanaged --name=src --cache-dir "$GITHUB_WORKSPACE/git_cache" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
           vpython3 depot_tools/gsutil.py version
           gclient sync --no-history --revision "src@$GITHUB_SHA"
       - name: Build
