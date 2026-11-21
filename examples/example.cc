@@ -8,7 +8,6 @@
 #include "base/logging/logging_settings.h"
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
-#include "build/build_config.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <atlbase.h>
